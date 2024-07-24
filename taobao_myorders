@@ -1,0 +1,114 @@
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from pyquery import PyQuery as pq
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from time import sleep
+import random
+import pandas as pd
+
+# 定义一个 taobao 类
+class TaobaoInfos:
+
+    # 对象初始化
+    def __init__(self):
+        url = 'https://www.taobao.com/'
+        self.url = url
+
+        options = Options()
+        options.add_argument("user-data-dir=<chrome_user_dir>")  # 替换为实际的用户数据目录路径. chrome.exe user-data-dir=<chrome_user_dir>
+        options.add_experimental_option("prefs", {"profile.managed_default_content_settings.images": 2})  # 不加载图片,加快访问速度
+        options.add_experimental_option('excludeSwitches', ['enable-automation'])  # 设置为开发者模式，防止被各大网站识别出来使用了Selenium
+
+        # 指定 ChromeDriver 的路径
+        chromedriver_path = "<chrome_user_dir>"
+        service = Service(chromedriver_path)
+        
+        self.browser = webdriver.Chrome(service=service, options=options)
+        self.wait = WebDriverWait(self.browser, 10)  # 超时时长为10s
+
+    # 打开淘宝页面
+    def open_taobao(self):
+        # 打开网页
+        self.browser.get(self.url)
+
+    # 模拟向下滑动浏览
+    def swipe_down(self, second):
+        for i in range(int(second / 0.1)):
+            # 根据i的值，模拟上下滑动
+            if i % 2 == 0:
+                js = "var q=document.documentElement.scrollTop=" + str(300 + 400 * i)
+            else:
+                js = "var q=document.documentElement.scrollTop=" + str(200 * i)
+            self.browser.execute_script(js)
+            sleep(0.1)
+
+        js = "var q=document.documentElement.scrollTop=100000"
+        self.browser.execute_script(js)
+        sleep(0.1)
+
+    # 爬取淘宝 我已买到的宝贝商品数据
+    def crawl_good_buy_data(self):
+        data = []
+
+        # 对我已买到的宝贝商品数据进行爬虫
+        self.browser.get("https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm")
+
+        # 遍历所有页数
+        for page in range(1, 38):
+            # 等待该页面全部已买到的宝贝商品数据加载完毕
+            good_total = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '#tp-bought-root > div.js-order-container')))
+
+            # 获取本页面源代码
+            html = self.browser.page_source
+
+            # pq模块解析网页源代码
+            doc = pq(html)
+
+            # 存储该页已经买到的宝贝数据
+            good_items = doc('#tp-bought-root .js-order-container').items()
+
+            # 遍历该页的所有宝贝
+            for item in good_items:
+                good_time_and_id = item.find('.bought-wrapper-mod__head-info-cell___29cDO').text().replace('\n', "").replace('\r', "")
+                good_merchant = item.find('.seller-mod__container___1w0Cx').text().replace('\n', "").replace('\r', "")
+                good_name = item.find('.ml-mod__container___1zaKJ').text().replace('\n', "").replace('\r', "").split("[")[0]
+                good_prices = item.find('.price-mod__price___3Un7c').text().replace('\n', "").replace('\r', "")
+                good_price = good_prices.split("￥")[-1]
+                if float(good_price) == 0:
+                    good_price = good_prices.split("￥")[-2]
+
+                
+                data.append([good_time_and_id, good_merchant, good_name, good_price])
+                print("GTI: ", good_time_and_id, "GM: ", good_merchant, "GN: ", good_name, "GP: ", good_price)
+
+            print('\n\n')
+
+            # 大部分人被检测为机器人就是因为进一步模拟人工操作
+            # 模拟人工向下浏览商品，即进行模拟下滑操作，防止被识别出是机器人
+            # 随机滑动延时时间
+            swipe_time = random.randint(1, 3)
+            self.swipe_down(swipe_time)
+
+            # 尝试获取下一页按钮，如果不存在，则跳出循环
+            try:
+                next_button = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '.pagination-next')))
+                next_button.click()
+                sleep(2)
+            except:
+                print("已经到最后一页")
+                break
+
+        # 将数据存入 Excel 文件
+        df = pd.DataFrame(data, columns=["购买时间和订单号", "商家名称", "商品名称", "商品价格"])
+        df.to_excel("taobao_goods.xlsx", index=False)
+        print("数据已存入 Excel 文件")
+
+# 使用教程：
+if __name__ == "__main__":
+    # 创建 TaobaoInfos 实例
+    taobao_instance = TaobaoInfos()
+    taobao_instance.open_taobao()  # 打开淘宝页面
+    taobao_instance.crawl_good_buy_data()  # 爬取淘宝 我已买到的宝贝商品数据
